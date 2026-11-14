@@ -1,10 +1,16 @@
+
 package com.inkflow.service;
 
 import com.inkflow.dto.RegisterRequest;
+import com.inkflow.dto.LoginRequest;
+import com.inkflow.dto.LoginResponse;
 import com.inkflow.entity.User;
 import com.inkflow.enums.Role;
 import com.inkflow.exception.EmailAlreadyExistsException;
 import com.inkflow.repository.UserRepository;
+
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -16,11 +22,14 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
 
     public UserService(UserRepository userRepository,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder,
+                       JwtService jwtService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.jwtService = jwtService;
     }
 
     public boolean emailExists(String email) {
@@ -35,10 +44,13 @@ public class UserService {
 
         Role role;
         try {
-            role = Role.valueOf(request.getRole().trim().toUpperCase(Locale.ROOT));
+            role = Role.valueOf(
+                    request.getRole().trim().toUpperCase(Locale.ROOT)
+            );
         } catch (IllegalArgumentException | NullPointerException exception) {
             throw new IllegalArgumentException("Invalid registration role");
         }
+
         if (role != Role.AUTHOR && role != Role.READER) {
             throw new IllegalArgumentException("Invalid registration role");
         }
@@ -53,5 +65,35 @@ public class UserService {
         user.setCreatedAt(LocalDateTime.now());
 
         return userRepository.save(user);
+    }
+
+    // Login functionality
+    public LoginResponse authenticateUser(LoginRequest request) {
+
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() ->
+                        new BadCredentialsException("Invalid email or password")
+                );
+
+        if (!passwordEncoder.matches(
+                request.getPassword(),
+                user.getPassword())) {
+
+            throw new BadCredentialsException("Invalid email or password");
+        }
+
+        if (!user.isActive()) {
+            throw new DisabledException("Account is disabled");
+        }
+
+        // Generate JWT after successful authentication
+        String token = jwtService.generateToken(user);
+
+        return new LoginResponse(
+                token,
+                user.getId(),
+                user.getEmail(),
+                user.getRole()
+        );
     }
 }
